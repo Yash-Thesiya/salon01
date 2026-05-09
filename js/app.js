@@ -1,6 +1,6 @@
 // Main App Logic
 const App = {
-    refreshInterval: null,
+    unsubscribeQueueSync: null,
     myCustomerId: null,
 
     init() {
@@ -25,16 +25,6 @@ const App = {
             this.showCustomerView();
         }
         
-        // Setup auto refresh
-        this.refreshInterval = setInterval(() => this.tick(), 5000);
-    },
-
-    tick() {
-        this.updatePublicView();
-        if (sessionStorage.getItem('sz_auth') === 'true') {
-            Dashboard.refresh();
-        }
-        this.checkMyStatus();
     },
 
     bindEvents() {
@@ -128,30 +118,11 @@ const App = {
     },
 
     bindRealtimeEvents() {
-        // Cross-tab updates: any localStorage write to sz_queue triggers this.
-        window.addEventListener('storage', (e) => {
-            if (!e) return;
-            if (e.key === Storage.KEYS.QUEUE || e.key === Storage.KEYS.QUEUE_EVENT) {
-                this.onQueueChanged();
-            }
-        });
-
-        // Same-tab updates (owner dashboard and customer view are same SPA).
-        window.addEventListener('sz:queue_changed', () => this.onQueueChanged());
-
-        // BroadcastChannel updates (supported browsers): immediate and reliable.
-        if ('BroadcastChannel' in window) {
-            try {
-                const bc = new BroadcastChannel('sz_queue_channel');
-                bc.addEventListener('message', (evt) => {
-                    if (evt?.data?.type === 'queue_changed') {
-                        this.onQueueChanged();
-                    }
-                });
-            } catch (_) {
-                // ignore
-            }
+        if (this.unsubscribeQueueSync) {
+            this.unsubscribeQueueSync();
         }
+
+        this.unsubscribeQueueSync = Storage.subscribeQueue(() => this.onQueueChanged());
     },
 
     onQueueChanged() {
