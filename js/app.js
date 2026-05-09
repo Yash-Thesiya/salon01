@@ -10,6 +10,11 @@ const App = {
             this.myCustomerId = parseInt(storedId, 10);
         }
 
+        const myToken = sessionStorage.getItem('myToken');
+        if (myToken) {
+            NotifSys.listenForMyTurn(parseInt(myToken, 10));
+        }
+
         this.bindEvents();
         this.bindRealtimeEvents();
         Dashboard.init();
@@ -63,6 +68,9 @@ const App = {
                 const customer = Queue.addCustomer(name, phone);
                 this.myCustomerId = customer.id;
                 sessionStorage.setItem('sz_my_id', customer.id.toString());
+                sessionStorage.setItem('myToken', String(customer.token));
+                sessionStorage.setItem('myName', customer.name);
+                NotifSys.listenForMyTurn(customer.token);
                 
                 document.getElementById('booking-form').reset();
                 this.updatePublicView();
@@ -76,6 +84,9 @@ const App = {
             }
             this.myCustomerId = null;
             sessionStorage.removeItem('sz_my_id');
+            sessionStorage.removeItem('myToken');
+            sessionStorage.removeItem('myName');
+            NotifSys.stopMyTurnListener();
             this.updatePublicView();
         });
 
@@ -180,6 +191,9 @@ const App = {
                 // Customer not found (e.g., queue cleared)
                 this.myCustomerId = null;
                 sessionStorage.removeItem('sz_my_id');
+                sessionStorage.removeItem('myToken');
+                sessionStorage.removeItem('myName');
+                NotifSys.stopMyTurnListener();
                 this.showBookingForm();
             }
         } else {
