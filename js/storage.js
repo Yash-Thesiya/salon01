@@ -1,88 +1,177 @@
-// Storage Management
+// Firestore-backed storage management
 const Storage = {
-    KEYS: {
-        QUEUE: 'sz_queue',
-        DAILY_COUNT: 'sz_daily_count',
-    DATE: 'sz_date',
-    QUEUE_EVENT: 'sz_queue_event' // used for same-tab signaling
+    queueStateDocPath: 'salon/state',
+    db: null,
+    docRef: null,
+    queueCache: [],
+    dailyCountCache: 0,
+    dateCache: '',
+    listeners: new Set(),
+    unsubscribeSnapshot: null,
+
+    init() {
+        if (!window.firebase || !firebase.firestore) {
+            throw new Error('Firebase Firestore SDK is not available.');
+        }
+
+        this.db = firebase.firestore();
+        this.docRef = this.db.doc(this.queueStateDocPath);
+        this.attachRealtimeListener();
+        this.ensureInitializedDocument();
     },
 
-  channel: null,
+    todayString() {
+        return new Date().toDateString();
+    },
 
-  initChannel() {
-    // BroadcastChannel is supported in modern Chromium/Firefox and works in same-tab too.
-    // We keep it optional and always fall back to `storage` events between tabs.
-    if (this.channel) return;
-    if ('BroadcastChannel' in window) {
-      this.channel = new BroadcastChannel('sz_queue_channel');
-    }
-  },
+    cloneQueue(queueArray) {
+        return JSON.parse(JSON.stringify(queueArray || []));
+    },
 
-  emitQueueChanged(reason = 'queue_updated') {
-    // Same-tab: CustomEvent + localStorage "event key" nudge.
-    // Cross-tab: `storage` event (from QUEUE key) + BroadcastChannel (when available).
-    try {
-      window.dispatchEvent(new CustomEvent('sz:queue_changed', { detail: { reason, at: Date.now() } }));
-    } catch (_) {
-      // ignore
-    }
+    notifyQueueChanged(reason = 'queue_updated') {
+        const eventPayload = { reason, at: Date.now() };
 
-    try {
-      localStorage.setItem(this.KEYS.QUEUE_EVENT, JSON.stringify({ reason, at: Date.now() }));
-    } catch (_) {
-      // ignore
-    }
+        this.listeners.forEach((listener) => {
+            try {
+                listener(eventPayload);
+            } catch (_) {
+                // ignore listener errors
+            }
+        });
 
-    this.initChannel();
-    if (this.channel) {
-      try {
-        this.channel.postMessage({ type: 'queue_changed', reason, at: Date.now() });
-      } catch (_) {
-        // ignore
-      }
-    }
-  },
-
-    // Initialize storage and check for midnight reset
-    init() {
-        const today = new Date().toDateString();
-        const storedDate = localStorage.getItem(this.KEYS.DATE);
-
-        if (storedDate !== today) {
-            this.clearData();
-            localStorage.setItem(this.KEYS.DATE, today);
+        try {
+            window.dispatchEvent(new CustomEvent('sz:queue_changed', { detail: eventPayload }));
+        } catch (_) {
+            // ignore browser event errors
         }
     },
 
+    subscribeQueue(listener) {
+        if (typeof listener !== 'function') {
+            return () => {};
+        }
+
+        this.listeners.add(listener);
+        return () => {
+            this.listeners.delete(listener);
+        };
+    },
+
+    applyRemoteState(data) {
+        this.queueCache = this.cloneQueue(data.queue || []);
+        this.dailyCountCache = Number.isFinite(data.dailyCount) ? data.dailyCount : 0;
+        this.dateCache = data.date || this.todayString();
+    },
+
+    ensureInitializedDocument() {
+        const today = this.todayString();
+        this.docRef.get().then((snap) => {
+            if (!snap.exists) {
+                this.writeState({
+                    queue: [],
+                    dailyCount: 0,
+                    date: today
+                });
+                return;
+            }
+
+            const data = snap.data() || {};
+            if (data.date !== today) {
+                this.writeState({
+                    queue: [],
+                    dailyCount: 0,
+                    date: today
+                });
+            }
+        }).catch((error) => {
+            console.error('Failed to initialize Firestore queue document:', error);
+        });
+    },
+
+    attachRealtimeListener() {
+        if (this.unsubscribeSnapshot) {
+            this.unsubscribeSnapshot();
+        }
+
+        this.unsubscribeSnapshot = this.docRef.onSnapshot((snap) => {
+            if (!snap.exists) {
+                return;
+            }
+
+            const data = snap.data() || {};
+            const today = this.todayString();
+
+            if (data.date && data.date !== today) {
+                this.writeState({
+                    queue: [],
+                    dailyCount: 0,
+                    date: today
+                });
+                return;
+            }
+
+            this.applyRemoteState(data);
+            this.notifyQueueChanged('firestore_snapshot');
+        }, (error) => {
+            console.error('Firestore realtime listener error:', error);
+        });
+    },
+
+    writeState(partialState) {
+        if (!this.docRef) return;
+
+        this.docRef.set({
+            queue: partialState.queue !== undefined ? partialState.queue : this.queueCache,
+            dailyCount: partialState.dailyCount !== undefined ? partialState.dailyCount : this.dailyCountCache,
+            date: partialState.date !== undefined ? partialState.date : this.dateCache || this.todayString(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true }).catch((error) => {
+            console.error('Failed to write Firestore queue state:', error);
+        });
+    },
+
     getData() {
-        const data = localStorage.getItem(this.KEYS.QUEUE);
-        return data ? JSON.parse(data) : [];
+        return this.cloneQueue(this.queueCache);
     },
 
     saveData(queueArray) {
-        localStorage.setItem(this.KEYS.QUEUE, JSON.stringify(queueArray));
-    this.emitQueueChanged('queue_saved');
+        this.queueCache = this.cloneQueue(queueArray);
+        this.dateCache = this.dateCache || this.todayString();
+        this.writeState({ queue: this.queueCache, date: this.dateCache });
+        this.notifyQueueChanged('queue_saved');
     },
 
     getDailyCount() {
-        const count = localStorage.getItem(this.KEYS.DAILY_COUNT);
-        return count ? parseInt(count, 10) : 0;
+        return this.dailyCountCache || 0;
     },
 
     incrementDailyCount() {
-        const current = this.getDailyCount();
-        const newCount = current + 1;
-        localStorage.setItem(this.KEYS.DAILY_COUNT, newCount.toString());
-        return newCount;
+        const today = this.todayString();
+        if (this.dateCache !== today) {
+            this.queueCache = [];
+            this.dailyCountCache = 0;
+            this.dateCache = today;
+        }
+
+        this.dailyCountCache += 1;
+        this.writeState({
+            dailyCount: this.dailyCountCache,
+            date: this.dateCache
+        });
+        return this.dailyCountCache;
     },
 
     clearData() {
-        localStorage.setItem(this.KEYS.QUEUE, JSON.stringify([]));
-        localStorage.setItem(this.KEYS.DAILY_COUNT, '0');
-    this.emitQueueChanged('queue_cleared');
+        this.queueCache = [];
+        this.dailyCountCache = 0;
+        this.dateCache = this.todayString();
+        this.writeState({
+            queue: [],
+            dailyCount: 0,
+            date: this.dateCache
+        });
+        this.notifyQueueChanged('queue_cleared');
     }
 };
 
-// Initialize on load
 Storage.init();
-Storage.initChannel();
