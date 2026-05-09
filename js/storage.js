@@ -6,7 +6,7 @@ const Storage = {
     queueCache: [],
     dailyCountCache: 0,
     dateCache: '',
-    listeners: new Set(),
+    listeners: new Set(), 
     unsubscribeSnapshot: null,
 
     init() {
