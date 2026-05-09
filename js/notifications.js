@@ -6,16 +6,11 @@ const NotifSys = {
 
     async requestPermission() {
         if (!this.supported) return false;
-        
-        if (Notification.permission === 'granted') {
-            return true;
-        }
-        
+        if (Notification.permission === 'granted') return true;
         if (Notification.permission !== 'denied') {
             const permission = await Notification.requestPermission();
             return permission === 'granted';
         }
-        
         return false;
     },
 
@@ -28,11 +23,11 @@ const NotifSys = {
             try {
                 new Notification(title, {
                     body: body,
-                    icon: '/favicon.ico', // fallback icon
-                    vibrate: [200, 100, 200]
+                    icon: '/favicon.ico',
+                    requireInteraction: true
                 });
             } catch (e) {
-                console.log("Notification error", e);
+                console.log('Notification error', e);
             }
         }
     },
@@ -43,135 +38,210 @@ const NotifSys = {
         }
         this.myTurnUnsubscribe = null;
         this.myTurnToken = null;
-        this.updateDebugPanel({
-            token: null,
-            status: 'idle',
-            time: new Date().toLocaleTimeString()
-        });
+        this.updateDebugPanel({ token: null, status: 'idle', time: new Date().toLocaleTimeString() });
     },
 
     listenForMyTurn(myTokenNumber) {
         const tokenNumber = parseInt(myTokenNumber, 10);
         if (!Number.isFinite(tokenNumber)) return;
 
+        // ✅ FIX 1: Pehle stop karo existing listener
         this.stopMyTurnListener();
         this.myTurnToken = tokenNumber;
-        console.log('Listener started for token:', tokenNumber);
-        this.updateDebugPanel({
-            token: tokenNumber,
-            status: 'listening',
-            time: new Date().toLocaleTimeString()
-        });
+
+        console.log('✅ Listener started for token:', tokenNumber);
+        this.updateDebugPanel({ token: tokenNumber, status: 'listening...', time: new Date().toLocaleTimeString() });
 
         if (!window.firebase || !firebase.firestore) {
-            console.log('Firebase not available for listener');
+            console.log('❌ Firebase not available');
             return;
         }
 
         const db = firebase.firestore();
+        // ✅ FIX 2: Same path jo storage.js use karta hai
         const docRef = db.doc('salon/state');
 
         this.myTurnUnsubscribe = docRef.onSnapshot((doc) => {
-            const payload = doc.exists ? (doc.data() || {}) : {};
-            const queue = Array.isArray(payload.queue) ? payload.queue : [];
-            const myEntry = queue.find((item) => Number(item.token) === tokenNumber);
-            const waitingLine = queue
-                .filter((item) => item.status === 'waiting' || item.status === 'called')
-                .sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
-            const position = myEntry ? waitingLine.findIndex((item) => Number(item.token) === tokenNumber) : -1;
+            if (!doc.exists) {
+                console.log('❌ Document does not exist');
+                return;
+            }
 
-            console.log('Firebase snapshot received:', myEntry);
-            console.log('Status is:', myEntry ? myEntry.status : 'not_found');
+            const payload = doc.data() || {};
+            const queue = Array.isArray(payload.queue) ? payload.queue : [];
+
+            // ✅ FIX 3: Token ko NUMBER se compare karo
+            const myEntry = queue.find((item) => Number(item.token) === tokenNumber);
+
+            console.log('🔥 Firebase snapshot received. My entry:', myEntry);
 
             this.updateDebugPanel({
                 token: tokenNumber,
-                status: myEntry ? myEntry.status : 'not_found',
+                status: myEntry ? myEntry.status : 'not found in queue',
                 time: new Date().toLocaleTimeString()
             });
 
-            if (!myEntry) return;
+            if (!myEntry) {
+                console.log('⚠️ My token not found in queue');
+                return;
+            }
 
+            console.log('📌 My status:', myEntry.status);
+
+            // ✅ FIX 4: calledAt key alag rakho — app.js se clash na ho
             if (myEntry.status === 'called') {
-                const calledAt = myEntry.calledAt || Date.now();
-                const seenKey = `sz_called_alert_token_${tokenNumber}`;
+                const calledAt = myEntry.calledAt || 0;
+                // ✅ FIX 5: Unique key use karo — app.js ki key se alag
+                const seenKey = `sz_notif_seen_${tokenNumber}`;
                 const lastSeen = sessionStorage.getItem(seenKey);
 
-                if (lastSeen !== String(calledAt)) {
+                console.log('🔔 Called! calledAt:', calledAt, 'lastSeen:', lastSeen);
+
+                if (String(calledAt) !== lastSeen) {
                     sessionStorage.setItem(seenKey, String(calledAt));
-                    console.log('Showing alert now!');
-                    this.showFullScreenAlert(tokenNumber);
-                    this.playBeepSound();
+                    console.log('🚨 Showing full screen alert!');
+
+                    // ✅ FIX 6: Thoda delay do taaki DOM ready ho
+                    setTimeout(() => {
+                        this.showFullScreenAlert(tokenNumber);
+                        this.playBeepSound();
+                        this.sendNotification("It's Your Turn!", `Token #${tokenNumber} — Please come to the salon now.`);
+                    }, 300);
+                } else {
+                    console.log('ℹ️ Alert already shown for this calledAt');
                 }
             }
 
-            if (position === 1) {
+            // ✅ FIX 7: Position calculate karo sirf waiting walo mein
+            const waitingLine = queue
+                .filter((item) => item.status === 'waiting')
+                .sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+
+            const position = waitingLine.findIndex((item) => Number(item.token) === tokenNumber);
+
+            if (position === 0 && myEntry.status === 'waiting') {
+                // Aap next hain
                 this.showComingSoonBanner();
             }
+
         }, (error) => {
-            console.log('Listener error:', error);
-            this.updateDebugPanel({
-                token: tokenNumber,
-                status: 'error',
-                time: new Date().toLocaleTimeString()
-            });
+            console.log('❌ Listener error:', error);
+            this.updateDebugPanel({ token: tokenNumber, status: 'ERROR: ' + error.message, time: new Date().toLocaleTimeString() });
         });
     },
 
     showFullScreenAlert(tokenNumber) {
+        // ✅ FIX 8: Pehle called-popup bhi hatao
+        const calledPopup = document.getElementById('called-popup');
+        if (calledPopup) calledPopup.classList.add('hidden');
+
         const existing = document.getElementById('my-turn-fullscreen-alert');
         if (existing) existing.remove();
 
         const overlay = document.createElement('div');
         overlay.id = 'my-turn-fullscreen-alert';
-        overlay.style.position = 'fixed';
-        overlay.style.inset = '0';
-        overlay.style.zIndex = '9999';
-        overlay.style.background = '#c8963e';
-        overlay.style.color = '#111';
-        overlay.style.display = 'flex';
-        overlay.style.alignItems = 'center';
-        overlay.style.justifyContent = 'center';
-        overlay.style.padding = '24px';
+        overlay.style.cssText = `
+            position: fixed;
+            inset: 0;
+            z-index: 99999;
+            background: #c8963e;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        `;
 
         overlay.innerHTML = `
-            <div style="text-align:center; max-width:520px; background:#fff8e6; border-radius:20px; padding:28px;">
-                <h1 style="margin:0 0 12px; font-size:44px; line-height:1.1;">Your Turn!</h1>
-                <div style="font-size:56px; font-weight:800; margin-bottom:10px;">Token #${tokenNumber}</div>
-                <p style="font-size:20px; margin:0 0 20px;">Please come to salon now</p>
-                <button id="dismiss-my-turn-alert" style="border:none; background:#111; color:#fff; padding:12px 24px; border-radius:12px; font-size:18px; cursor:pointer;">OK</button>
+            <div style="
+                text-align: center;
+                max-width: 420px;
+                background: #fff8e6;
+                border-radius: 24px;
+                padding: 36px 28px;
+                box-shadow: 0 8px 40px rgba(0,0,0,0.25);
+            ">
+                <div style="font-size: 64px; margin-bottom: 12px;">✂️</div>
+                <h1 style="
+                    margin: 0 0 8px;
+                    font-size: 40px;
+                    color: #111;
+                    font-weight: 800;
+                ">Your Turn!</h1>
+                <div style="
+                    font-size: 64px;
+                    font-weight: 900;
+                    color: #c8963e;
+                    margin: 8px 0;
+                ">
+                    #${tokenNumber}
+                </div>
+                <p style="
+                    font-size: 18px;
+                    color: #444;
+                    margin: 0 0 28px;
+                ">
+                    Please come to the salon now
+                </p>
+                <button
+                    id="dismiss-my-turn-alert"
+                    style="
+                        border: none;
+                        background: #111;
+                        color: #fff;
+                        padding: 14px 32px;
+                        border-radius: 50px;
+                        font-size: 18px;
+                        cursor: pointer;
+                        font-weight: 600;
+                    "
+                >
+                    ✅ OK, Coming!
+                </button>
             </div>
         `;
 
         document.body.appendChild(overlay);
+
         const dismissBtn = document.getElementById('dismiss-my-turn-alert');
         if (dismissBtn) {
             dismissBtn.addEventListener('click', () => overlay.remove());
         }
+
+        // ✅ Auto dismiss after 60 seconds
+        setTimeout(() => {
+            if (document.getElementById('my-turn-fullscreen-alert')) {
+                overlay.remove();
+            }
+        }, 60000);
     },
 
     playBeepSound() {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtx) return;
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
 
-        const context = new AudioCtx();
-        const beepDuration = 180;
-        const gap = 140;
+            const context = new AudioCtx();
 
-        for (let i = 0; i < 3; i += 1) {
-            const osc = context.createOscillator();
-            const gain = context.createGain();
-            osc.type = 'sine';
-            osc.frequency.value = 800;
-            osc.connect(gain);
-            gain.connect(context.destination);
+            for (let i = 0; i < 3; i++) {
+                const osc = context.createOscillator();
+                const gain = context.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = 880;
+                osc.connect(gain);
+                gain.connect(context.destination);
 
-            const startTime = context.currentTime + (i * (beepDuration + gap)) / 1000;
-            const endTime = startTime + beepDuration / 1000;
-            gain.gain.setValueAtTime(0.0001, startTime);
-            gain.gain.exponentialRampToValueAtTime(0.25, startTime + 0.02);
-            gain.gain.exponentialRampToValueAtTime(0.0001, endTime);
-            osc.start(startTime);
-            osc.stop(endTime);
+                const startTime = context.currentTime + i * 0.4;
+                const endTime = startTime + 0.25;
+
+                gain.gain.setValueAtTime(0.0001, startTime);
+                gain.gain.exponentialRampToValueAtTime(0.4, startTime + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, endTime);
+
+                osc.start(startTime);
+                osc.stop(endTime);
+            }
+        } catch (e) {
+            console.log('Audio error:', e);
         }
     },
 
@@ -180,31 +250,29 @@ const NotifSys = {
         if (!banner) {
             banner = document.createElement('div');
             banner.id = 'coming-soon-banner';
-            banner.textContent = '1 person ahead of you - please start coming';
-            banner.style.position = 'fixed';
-            banner.style.top = '0';
-            banner.style.left = '0';
-            banner.style.right = '0';
-            banner.style.zIndex = '9998';
-            banner.style.background = '#ffd84d';
-            banner.style.color = '#111';
-            banner.style.padding = '10px 12px';
-            banner.style.textAlign = 'center';
-            banner.style.fontWeight = '700';
+            banner.textContent = '⚠️ You are next! Please start coming to the salon.';
+            banner.style.cssText = `
+                position: fixed;
+                top: 0; left: 0; right: 0;
+                z-index: 9998;
+                background: #ffd84d;
+                color: #111;
+                padding: 12px 16px;
+                text-align: center;
+                font-weight: 700;
+                font-size: 15px;
+            `;
             document.body.appendChild(banner);
         }
 
         clearTimeout(this._comingSoonTimer);
         this._comingSoonTimer = setTimeout(() => {
-            const existing = document.getElementById('coming-soon-banner');
-            if (existing) existing.remove();
-        }, 6000);
+            const b = document.getElementById('coming-soon-banner');
+            if (b) b.remove();
+        }, 30000);
     },
 
     updateDebugPanel({ token, status, time }) {
-        const panel = document.getElementById('firebase-debug-panel');
-        if (!panel) return;
-
         const tokenEl = document.getElementById('debug-token');
         const timeEl = document.getElementById('debug-last-update');
         const statusEl = document.getElementById('debug-status');
