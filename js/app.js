@@ -4,32 +4,38 @@ const App = {
     myCustomerId: null,
 
     init() {
+        // ✅ FIX 1: Storage pehle init ho — phir baaki sab
+        Storage.init();
+
         // Check for existing session
         const storedId = sessionStorage.getItem('sz_my_id');
         if (storedId) {
             this.myCustomerId = parseInt(storedId, 10);
         }
 
+        // ✅ FIX 2: Page load par listener restart karo (refresh ke baad bhi kaam kare)
         const myToken = sessionStorage.getItem('myToken');
         if (myToken) {
-            NotifSys.listenForMyTurn(parseInt(myToken, 10));
+            console.log('🔄 Page loaded — restarting listener for token:', myToken);
+            // Thoda wait karo — Firebase ready hone do
+            setTimeout(() => {
+                NotifSys.listenForMyTurn(parseInt(myToken, 10));
+            }, 1500);
         }
 
         this.bindEvents();
         this.bindRealtimeEvents();
         Dashboard.init();
 
-        // Mandatory notifications: ask as soon as customer opens the app.
+        // Notification permission
         this.ensureNotificationPermission({ showBlockedAlert: false });
 
-        // Restore last known view on refresh.
-        // If owner is authenticated, keep them in the dashboard (skip login modal).
+        // Restore last known view
         if (sessionStorage.getItem('sz_auth') === 'true') {
             this.showDashboardContent();
         } else {
             this.showCustomerView();
         }
-        
     },
 
     bindEvents() {
@@ -47,37 +53,43 @@ const App = {
             this.showCustomerView();
         });
 
-        // Booking
+        // Booking Form
         document.getElementById('booking-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const name = document.getElementById('customer-name').value.trim();
             const phone = document.getElementById('customer-phone').value.trim();
-            
+
             const phoneRegex = /^\d{10}$/;
             if (!phoneRegex.test(phone)) {
-                alert("Please enter a valid 10-digit phone number.");
+                alert('Please enter a valid 10-digit phone number.');
                 return;
             }
 
             if (name && phone) {
-                const notifReady = await this.ensureNotificationPermission({ showBlockedAlert: true });
-                if (!notifReady) {
-                    return;
-                }
-
                 const customer = Queue.addCustomer(name, phone);
                 this.myCustomerId = customer.id;
+
+                // ✅ FIX 3: Session mein save karo
                 sessionStorage.setItem('sz_my_id', customer.id.toString());
                 sessionStorage.setItem('myToken', String(customer.token));
                 sessionStorage.setItem('myName', customer.name);
-                NotifSys.listenForMyTurn(customer.token);
-                
+
+                console.log('✅ Token booked:', customer.token, '— starting listener');
+
+                // ✅ FIX 4: Listener shuru karo booking ke baad
+                setTimeout(() => {
+                    NotifSys.listenForMyTurn(customer.token);
+                }, 500);
+
                 document.getElementById('booking-form').reset();
                 this.updatePublicView();
+
+                // Optional: notification permission maango
+                this.ensureNotificationPermission({ showBlockedAlert: false });
             }
         });
 
-        // Cancel/New Token
+        // Cancel token
         document.getElementById('btn-new-token').addEventListener('click', () => {
             if (this.myCustomerId) {
                 Queue.markCanceled(this.myCustomerId);
@@ -90,16 +102,16 @@ const App = {
             this.updatePublicView();
         });
 
-        // Notifications
+        // Enable notifications button
         document.getElementById('btn-enable-notif').addEventListener('click', async () => {
             const granted = await this.ensureNotificationPermission({ showBlockedAlert: true });
             if (granted) {
                 document.getElementById('notif-prompt').classList.add('hidden');
-                NotifSys.sendNotification("Notifications Enabled", "We'll notify you when it's your turn.");
+                NotifSys.sendNotification('Notifications Enabled', "We'll notify you when it's your turn.");
             }
         });
 
-        // Called popup controls
+        // Called popup close
         const closeBtn = document.getElementById('called-popup-close');
         if (closeBtn) {
             closeBtn.addEventListener('click', () => this.hideCalledPopup());
@@ -107,24 +119,14 @@ const App = {
         const popup = document.getElementById('called-popup');
         if (popup) {
             popup.addEventListener('click', (e) => {
-                // click outside the card closes
                 if (e.target === popup) this.hideCalledPopup();
             });
         }
     },
 
     async ensureNotificationPermission({ showBlockedAlert = true } = {}) {
-        if (!NotifSys.supported) {
-            if (showBlockedAlert) {
-                alert("Notifications are mandatory for queue updates. Please use a browser that supports notifications.");
-            }
-            return false;
-        }
-
+        if (!NotifSys.supported) return false;
         const granted = await NotifSys.requestPermission();
-        if (!granted && showBlockedAlert) {
-            alert("Notification access is mandatory. Please allow notifications to join and receive call updates.");
-        }
         return granted;
     },
 
@@ -132,13 +134,14 @@ const App = {
         if (this.unsubscribeQueueSync) {
             this.unsubscribeQueueSync();
         }
-
         this.unsubscribeQueueSync = Storage.subscribeQueue(() => this.onQueueChanged());
     },
 
     onQueueChanged() {
         this.updatePublicView();
-        this.checkMyStatus();
+        // ✅ FIX 5: checkMyStatus hataya — ab notifications.js handle karta hai
+        // Sirf called-popup show karo (existing UI feature)
+        this.checkMyStatusForPopup();
         if (sessionStorage.getItem('sz_auth') === 'true') {
             Dashboard.refresh();
         }
@@ -149,7 +152,6 @@ const App = {
         document.getElementById('waiting-count').textContent = waiting.length;
         document.getElementById('est-wait-time').textContent = waiting.length * Queue.EST_WAIT_PER_PERSON;
 
-        // Live queue highlights
         const queue = Queue.getQueue();
         const calledCustomer = queue
             .filter(c => c.status === 'called' && c.calledAt)
@@ -157,12 +159,17 @@ const App = {
         const nextWaitingCustomer = queue
             .filter(c => c.status === 'waiting')
             .sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0))[0];
-        const activeToken = (calledCustomer && calledCustomer.token) ? calledCustomer.token : (nextWaitingCustomer ? nextWaitingCustomer.token : '--');
+
+        const activeToken = (calledCustomer && calledCustomer.token)
+            ? calledCustomer.token
+            : (nextWaitingCustomer ? nextWaitingCustomer.token : '--');
 
         const lastCompletedCustomer = queue
             .filter(c => c.status === 'done' && c.calledAt)
             .sort((a, b) => (b.calledAt || 0) - (a.calledAt || 0))[0];
-        const lastCompletedToken = (lastCompletedCustomer && lastCompletedCustomer.token) ? lastCompletedCustomer.token : '--';
+        const lastCompletedToken = (lastCompletedCustomer && lastCompletedCustomer.token)
+            ? lastCompletedCustomer.token
+            : '--';
 
         const activeEl = document.getElementById('active-token-number');
         if (activeEl) activeEl.textContent = activeToken;
@@ -174,10 +181,11 @@ const App = {
             if (customer) {
                 document.getElementById('booking-section').classList.add('hidden');
                 document.getElementById('confirmation-section').classList.remove('hidden');
-                
+
                 document.getElementById('my-token').textContent = customer.token;
-                document.getElementById('my-status').textContent = customer.status.charAt(0).toUpperCase() + customer.status.slice(1);
-                
+                document.getElementById('my-status').textContent =
+                    customer.status.charAt(0).toUpperCase() + customer.status.slice(1);
+
                 const pos = Queue.getQueuePosition(this.myCustomerId);
                 document.getElementById('my-ahead').textContent = pos >= 0 ? pos : 0;
                 document.getElementById('my-est-wait').textContent = Queue.calculateWaitTime(pos);
@@ -188,7 +196,7 @@ const App = {
                     document.getElementById('notif-prompt').classList.remove('hidden');
                 }
             } else {
-                // Customer not found (e.g., queue cleared)
+                // Queue clear ho gayi
                 this.myCustomerId = null;
                 sessionStorage.removeItem('sz_my_id');
                 sessionStorage.removeItem('myToken');
@@ -206,23 +214,21 @@ const App = {
         document.getElementById('confirmation-section').classList.add('hidden');
     },
 
-    checkMyStatus() {
+    // ✅ FIX 6: Sirf called-popup ke liye — full screen alert notifications.js handle karta hai
+    checkMyStatusForPopup() {
         if (!this.myCustomerId) return;
-        
         const customer = Queue.getCustomerById(this.myCustomerId);
         if (!customer) return;
 
-        // Show popup for every "called" event (keyed by calledAt so it won't miss repeats)
-        const lastSeenCalledAt = parseInt(sessionStorage.getItem(`sz_calledAt_${this.myCustomerId}`) || '0', 10);
+        const lastSeenCalledAt = parseInt(
+            sessionStorage.getItem(`sz_calledAt_${this.myCustomerId}`) || '0', 10
+        );
         const calledAt = customer.calledAt || 0;
 
         if (customer.status === 'called' && calledAt && calledAt !== lastSeenCalledAt) {
             sessionStorage.setItem(`sz_calledAt_${this.myCustomerId}`, String(calledAt));
+            // ✅ called-popup show karo (HTML wala UI element)
             this.showCalledPopup(customer.token);
-
-            if (NotifSys.hasPermission()) {
-                NotifSys.sendNotification("It's Your Turn!", `Token #${customer.token}, please proceed to the salon chair.`);
-            }
         }
     },
 
@@ -248,7 +254,6 @@ const App = {
         document.getElementById('customer-view').classList.remove('hidden');
         document.getElementById('customer-view').classList.add('active');
         this.updatePublicView();
-        this.checkMyStatus();
     },
 
     showLogin() {
@@ -272,7 +277,7 @@ const App = {
     }
 };
 
-// Start App when DOM is ready
+// ✅ FIX 7: DOMContentLoaded par init karo
 document.addEventListener('DOMContentLoaded', () => {
     App.init();
 });
