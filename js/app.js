@@ -17,11 +17,11 @@ const App = {
         const myToken = sessionStorage.getItem('myToken');
         if (myToken) {
             console.log('🔄 Page loaded — restarting listener for token:', myToken);
-            // Thoda wait karo — Firebase ready hone do
-            setTimeout(() => {
-                NotifSys.listenForMyTurn(parseInt(myToken, 10));
-            }, 1500);
+            NotifSys.initFCM();
+            NotifSys.listenForMyTurn(parseInt(myToken, 10));
         }
+
+        NotifSys.initForegroundMessages();
 
         this.bindEvents();
         this.bindRealtimeEvents();
@@ -73,6 +73,7 @@ const App = {
                 sessionStorage.setItem('sz_my_id', customer.id.toString());
                 sessionStorage.setItem('myToken', String(customer.token));
                 sessionStorage.setItem('myName', customer.name);
+                await NotifSys.initFCM();
 
                 console.log('✅ Token booked:', customer.token, '— starting listener');
 
