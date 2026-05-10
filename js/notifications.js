@@ -216,9 +216,13 @@ const NotifSys = {
     },
 
     playBeepSound() {
-        const audio = new Audio('assets/notify.mp3');
-        audio.volume = 0.9;
-        audio.play().catch((e) => console.log(e));
+        try {
+            const audio = new Audio('assets/notify.mp3');
+            audio.volume = 0.8;
+            audio.play().catch(e => console.log('Audio error:', e));
+        } catch (e) {
+            console.log('Audio error:', e);
+        }
     },
 
     showComingSoonBanner() {
