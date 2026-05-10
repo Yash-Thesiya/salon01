@@ -32,6 +32,51 @@ const NotifSys = {
         }
     },
 
+    async initFCM() {
+        try {
+            if (!window.firebase || !firebase.messaging || !firebase.firestore) return null;
+            const messaging = firebase.messaging();
+
+            const permission = await Notification.requestPermission();
+            if (permission !== 'granted') return null;
+
+            const fcmToken = await messaging.getToken({
+                vapidKey: 'BHRsgoqCBBCux2x8G9FDIklDVBiYA4o3ZADl364vC6_mCpx5z1I2UYpgpgJc3rMFNqTidI1sw2PptyrMOF9CN_U'
+            });
+
+            if (fcmToken) {
+                console.log('FCM Token:', fcmToken);
+                const db = firebase.firestore();
+                const myToken = sessionStorage.getItem('myToken');
+                if (myToken) {
+                    await db.collection('fcmTokens').doc(myToken).set({
+                        fcmToken: fcmToken,
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                }
+                return fcmToken;
+            }
+        } catch (e) {
+            console.log('FCM init error:', e);
+            return null;
+        }
+        return null;
+    },
+
+    initForegroundMessages() {
+        try {
+            if (!window.firebase || !firebase.messaging) return;
+            const messaging = firebase.messaging();
+            messaging.onMessage((payload) => {
+                console.log('Foreground message:', payload);
+                // App is open — already handled by listenForMyTurn
+                // No duplicate alert needed
+            });
+        } catch (e) {
+            console.log('Foreground message error:', e);
+        }
+    },
+
     stopMyTurnListener() {
         if (typeof this.myTurnUnsubscribe === 'function') {
             this.myTurnUnsubscribe();
