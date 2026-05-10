@@ -216,6 +216,20 @@ const NotifSys = {
     },
 
     playBeepSound() {
+        // MP3 pehle try karo
+        try {
+            const audio = new Audio('assets/notify.mp3');
+            audio.volume = 0.8;
+            audio.play().catch(() => {
+                // MP3 fail ho toh original tune bajao
+                this._playOriginalTune();
+            });
+        } catch (e) {
+            this._playOriginalTune();
+        }
+    },
+
+    _playOriginalTune() {
         try {
             const AudioCtx = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtx) return;
