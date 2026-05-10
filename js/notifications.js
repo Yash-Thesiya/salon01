@@ -219,27 +219,34 @@ const NotifSys = {
         try {
             const AudioCtx = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtx) return;
- 
-            const context = new AudioCtx();
- 
-            for (let i = 0; i < 3; i++) {
-                const osc = context.createOscillator();
-                const gain = context.createGain();
-                osc.type = 'sine';
-                osc.frequency.value = 880;
+            const ctx = new AudioCtx();
+    
+            // 🎵 Tune: DO - MI - SOL - MI - DO (happy salon tune)
+            const notes = [
+                { freq: 523, start: 0.0,  dur: 0.18 },  // C5
+                { freq: 659, start: 0.2,  dur: 0.18 },  // E5
+                { freq: 784, start: 0.4,  dur: 0.18 },  // G5
+                { freq: 659, start: 0.6,  dur: 0.18 },  // E5
+                { freq: 1047,start: 0.8,  dur: 0.35 },  // C6 (high)
+            ];
+    
+            notes.forEach(({ freq, start, dur }) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'triangle'; // 'sine' se thoda rich sound
+                osc.frequency.value = freq;
                 osc.connect(gain);
-                gain.connect(context.destination);
- 
-                const startTime = context.currentTime + i * 0.4;
-                const endTime = startTime + 0.25;
- 
-                gain.gain.setValueAtTime(0.0001, startTime);
-                gain.gain.exponentialRampToValueAtTime(0.4, startTime + 0.02);
-                gain.gain.exponentialRampToValueAtTime(0.0001, endTime);
- 
-                osc.start(startTime);
-                osc.stop(endTime);
-            }
+                gain.connect(ctx.destination);
+    
+                const s = ctx.currentTime + start;
+                const e = s + dur;
+                gain.gain.setValueAtTime(0.0001, s);
+                gain.gain.exponentialRampToValueAtTime(0.3, s + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, e);
+                osc.start(s);
+                osc.stop(e);
+            });
+    
         } catch (e) {
             console.log('Audio error:', e);
         }
