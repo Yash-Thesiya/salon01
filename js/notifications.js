@@ -216,7 +216,7 @@ const NotifSys = {
     },
 
     playBeepSound() {
-        const audio = new Audio('/assets/notify.mp3');
+        const audio = new Audio('assets/notify.mp3');
         audio.volume = 0.9;
         audio.play().catch((e) => console.log(e));
     },
