@@ -32,51 +32,6 @@ const NotifSys = {
         }
     },
 
-    async initFCM() {
-        try {
-            if (!window.firebase || !firebase.messaging || !firebase.firestore) return null;
-            const messaging = firebase.messaging();
-
-            const permission = await Notification.requestPermission();
-            if (permission !== 'granted') return null;
-
-            const fcmToken = await messaging.getToken({
-                vapidKey: 'BHRsgoqCBBCux2x8G9FDIklDVBiYA4o3ZADl364vC6_mCpx5z1I2UYpgpgJc3rMFNqTidI1sw2PptyrMOF9CN_U'
-            });
-
-            if (fcmToken) {
-                console.log('FCM Token:', fcmToken);
-                const db = firebase.firestore();
-                const myToken = sessionStorage.getItem('myToken');
-                if (myToken) {
-                    await db.collection('fcmTokens').doc(myToken).set({
-                        fcmToken: fcmToken,
-                        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                }
-                return fcmToken;
-            }
-        } catch (e) {
-            console.log('FCM init error:', e);
-            return null;
-        }
-        return null;
-    },
-
-    initForegroundMessages() {
-        try {
-            if (!window.firebase || !firebase.messaging) return;
-            const messaging = firebase.messaging();
-            messaging.onMessage((payload) => {
-                console.log('Foreground message:', payload);
-                // App is open — already handled by listenForMyTurn
-                // No duplicate alert needed
-            });
-        } catch (e) {
-            console.log('Foreground message error:', e);
-        }
-    },
-
     stopMyTurnListener() {
         if (typeof this.myTurnUnsubscribe === 'function') {
             this.myTurnUnsubscribe();
@@ -261,54 +216,9 @@ const NotifSys = {
     },
 
     playBeepSound() {
-        // MP3 pehle try karo
-        try {
-            const audio = new Audio('assets/notify.mp3');
-            audio.volume = 0.8;
-            audio.play().catch(() => {
-                // MP3 fail ho toh original tune bajao
-                this._playOriginalTune();
-            });
-        } catch (e) {
-            this._playOriginalTune();
-        }
-    },
-
-    _playOriginalTune() {
-        try {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return;
-            const ctx = new AudioCtx();
-    
-            // 🎵 Tune: DO - MI - SOL - MI - DO (happy salon tune)
-            const notes = [
-                { freq: 523, start: 0.0,  dur: 0.18 },  // C5
-                { freq: 659, start: 0.2,  dur: 0.18 },  // E5
-                { freq: 784, start: 0.4,  dur: 0.18 },  // G5
-                { freq: 659, start: 0.6,  dur: 0.18 },  // E5
-                { freq: 1047,start: 0.8,  dur: 0.35 },  // C6 (high)
-            ];
-    
-            notes.forEach(({ freq, start, dur }) => {
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = 'triangle'; // 'sine' se thoda rich sound
-                osc.frequency.value = freq;
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-    
-                const s = ctx.currentTime + start;
-                const e = s + dur;
-                gain.gain.setValueAtTime(0.0001, s);
-                gain.gain.exponentialRampToValueAtTime(0.3, s + 0.02);
-                gain.gain.exponentialRampToValueAtTime(0.0001, e);
-                osc.start(s);
-                osc.stop(e);
-            });
-    
-        } catch (e) {
-            console.log('Audio error:', e);
-        }
+        const audio = new Audio('/assets/notify.mp3');
+        audio.volume = 0.9;
+        audio.play().catch((e) => console.log(e));
     },
 
     showComingSoonBanner() {
