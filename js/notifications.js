@@ -217,9 +217,29 @@ const NotifSys = {
 
     playBeepSound() {
         try {
-            const audio = new Audio('assets/notify.mp3');
-            audio.volume = 0.8;
-            audio.play().catch(e => console.log('Audio error:', e));
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return;
+ 
+            const context = new AudioCtx();
+ 
+            for (let i = 0; i < 3; i++) {
+                const osc = context.createOscillator();
+                const gain = context.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = 880;
+                osc.connect(gain);
+                gain.connect(context.destination);
+ 
+                const startTime = context.currentTime + i * 0.4;
+                const endTime = startTime + 0.25;
+ 
+                gain.gain.setValueAtTime(0.0001, startTime);
+                gain.gain.exponentialRampToValueAtTime(0.4, startTime + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, endTime);
+ 
+                osc.start(startTime);
+                osc.stop(endTime);
+            }
         } catch (e) {
             console.log('Audio error:', e);
         }
