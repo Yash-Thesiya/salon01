@@ -76,12 +76,14 @@ const App = {
 
                 console.log('✅ Token booked:', customer.token, '— starting listener');
 
+                document.getElementById('booking-form').reset();
+                this.applyConfirmationUI(customer);
+
                 // ✅ FIX 4: Listener shuru karo booking ke baad
                 setTimeout(() => {
                     NotifSys.listenForMyTurn(customer.token);
                 }, 500);
 
-                document.getElementById('booking-form').reset();
                 this.updatePublicView();
 
                 // Optional: notification permission maango
@@ -176,27 +178,28 @@ const App = {
         const lastCompletedEl = document.getElementById('last-completed-token-number');
         if (lastCompletedEl) lastCompletedEl.textContent = lastCompletedToken;
 
-        if (this.myCustomerId) {
-            const customer = Queue.getCustomerById(this.myCustomerId);
-            if (customer) {
-                document.getElementById('booking-section').classList.add('hidden');
-                document.getElementById('confirmation-section').classList.remove('hidden');
+        const sessionToken = sessionStorage.getItem('myToken');
+        const hasActiveSession = this.myCustomerId || sessionToken;
 
-                document.getElementById('my-token').textContent = customer.token;
-                document.getElementById('my-status').textContent =
-                    customer.status.charAt(0).toUpperCase() + customer.status.slice(1);
-
-                const pos = Queue.getQueuePosition(this.myCustomerId);
-                document.getElementById('my-ahead').textContent = pos >= 0 ? pos : 0;
-                document.getElementById('my-est-wait').textContent = Queue.calculateWaitTime(pos);
-
-                if (NotifSys.hasPermission() || customer.status !== 'waiting') {
-                    document.getElementById('notif-prompt').classList.add('hidden');
-                } else {
-                    document.getElementById('notif-prompt').classList.remove('hidden');
+        if (hasActiveSession) {
+            let customer = this.myCustomerId
+                ? Queue.getCustomerById(this.myCustomerId)
+                : null;
+            if (!customer && sessionToken) {
+                customer = queue.find((c) => String(c.token) === sessionToken) || null;
+                if (customer) {
+                    this.myCustomerId = customer.id;
+                    sessionStorage.setItem('sz_my_id', String(customer.id));
                 }
+            }
+            if (customer) {
+                this.applyConfirmationUI(customer);
+            } else if (sessionToken) {
+                this.applyConfirmationUI({
+                    token: sessionToken,
+                    status: 'waiting'
+                });
             } else {
-                // Queue clear ho gayi
                 this.myCustomerId = null;
                 sessionStorage.removeItem('sz_my_id');
                 sessionStorage.removeItem('myToken');
@@ -206,6 +209,29 @@ const App = {
             }
         } else {
             this.showBookingForm();
+        }
+    },
+
+    applyConfirmationUI(customer) {
+        document.getElementById('booking-section').classList.add('hidden');
+        document.getElementById('confirmation-section').classList.remove('hidden');
+
+        document.getElementById('my-token').textContent = customer.token;
+        const status = (customer.status || 'waiting').toString();
+        document.getElementById('my-status').textContent =
+            status.charAt(0).toUpperCase() + status.slice(1);
+
+        const pos = this.myCustomerId
+            ? Queue.getQueuePosition(this.myCustomerId)
+            : -1;
+        document.getElementById('my-ahead').textContent = pos >= 0 ? pos : 0;
+        document.getElementById('my-est-wait').textContent =
+            pos >= 0 ? Queue.calculateWaitTime(pos) : 0;
+
+        if (NotifSys.hasPermission() || status !== 'waiting') {
+            document.getElementById('notif-prompt').classList.add('hidden');
+        } else {
+            document.getElementById('notif-prompt').classList.remove('hidden');
         }
     },
 
